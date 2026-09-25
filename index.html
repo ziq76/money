@@ -23,14 +23,14 @@
         <h1 class="text-[10px] font-bold uppercase tracking-[0.25em] text-zinc-500">ALLOCATION PROTOCOL</h1>
         <div class="text-xl font-extrabold tracking-tight text-white">MONEY TRACKER</div>
       </div>
-      <div id="todayDate" class="mono text-xs text-zinc-500">2026-09-25</div>
+      <div id="todayDate" class="mono text-xs text-zinc-500">Memuat tarikh...</div>
     </header>
 
-    <!-- Khas: Status Harian Makan RHB (RM12/Hari) -->
+    <!-- Status Harian Makan RHB (Had RM12/Hari & Reset 12 AM) -->
     <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
       <div class="flex justify-between items-center text-xs">
         <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
-        <span class="text-[11px] text-zinc-500">Had: RM 12.00</span>
+        <span class="text-[11px] text-zinc-500">Had: RM 12.00 (Reset 12:00 AM)</span>
       </div>
       <div class="flex justify-between items-baseline">
         <div class="space-y-0.5">
@@ -98,14 +98,14 @@
         <button type="button" onclick="selectAccount('tng', this)" class="acc-btn p-2 rounded-lg border border-zinc-800 bg-black text-zinc-400 font-bold">TnG</button>
       </div>
 
-      <!-- Jumlah & Catatan -->
+      <!-- Ruang Nilai & Catatan -->
       <div class="space-y-2">
         <div class="relative">
           <span class="absolute left-3 top-3 mono text-sm font-bold text-zinc-500">RM</span>
           <input type="number" step="0.10" id="txnAmount" placeholder="0.00" 
             class="w-full bg-black border border-zinc-800 rounded-xl py-2.5 pl-11 pr-3 text-base mono font-bold text-white focus:outline-none focus:border-zinc-500">
         </div>
-        <input type="text" id="txnDesc" placeholder="Catatan (cth: Nasi ayam gepuk, Petronas, print lab)..." 
+        <input type="text" id="txnDesc" placeholder="Catatan (cth: Nasi bajet, RON95, print lab)..." 
           class="w-full bg-black border border-zinc-800 rounded-xl p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 placeholder:text-zinc-700">
       </div>
 
@@ -129,13 +129,15 @@
   </main>
 
   <script>
+    // --- 1. KONFIGURASI SUPABASE ---
     const SUPABASE_URL = "https://jrbbiqchqahyjhkxqmgr.supabase.co";
     const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     let currentAccount = 'rhb';
-    let currentType = 'expense'; // 'expense' atau 'deposit'
+    let currentType = 'expense';
 
+    // Format tarikh tempatan YYYY-MM-DD
     function getTodayString() {
       const now = new Date();
       const yyyy = now.getFullYear();
@@ -144,9 +146,20 @@
       return `${yyyy}-${mm}-${dd}`;
     }
 
-    const todayStr = getTodayString();
+    let todayStr = getTodayString();
     document.getElementById('todayDate').innerText = todayStr;
 
+    // --- 2. PEMERIKSA 12:00 TENGAH MALAM (AUTO-RESET) ---
+    setInterval(() => {
+      const currentCheck = getTodayString();
+      if (currentCheck !== todayStr) {
+        todayStr = currentCheck;
+        document.getElementById('todayDate').innerText = todayStr;
+        loadData(); // Baki makanan harian automatik kembali ke RM12
+      }
+    }, 15000); // Semak setiap 15 saat
+
+    // --- 3. LOGIK UI & INTERAKSI ---
     function setTxnType(type) {
       currentType = type;
       const btnExp = document.getElementById('btnTypeExpense');
@@ -168,8 +181,9 @@
       el.className = "acc-btn p-2 rounded-lg border border-emerald-500 bg-zinc-900 text-emerald-400 font-bold";
     }
 
+    // --- 4. MUAT TURUN DATA DARI SUPABASE ---
     async function loadData() {
-      // 1. Dapatkan Baki Akaun
+      // Dapatkan baki keseluruhan 4 akaun
       const { data: accounts, error: accErr } = await db.from('money_accounts').select('*');
       if (!accErr && accounts) {
         accounts.forEach(a => {
@@ -178,7 +192,7 @@
         });
       }
 
-      // 2. Dapatkan Transaksi Hari Ini untuk RHB Makan (Had RM12)
+      // Dapatkan transaksi makan hari ini (RHB sahaja)
       const { data: todayTxns } = await db
         .from('money_transactions')
         .select('*')
@@ -209,8 +223,8 @@
       bar.style.width = `${barPct}%`;
       bar.className = remainingToday <= 3 ? "h-full bg-rose-500 transition-all duration-300" : "h-full bg-emerald-500 transition-all duration-300";
 
-      // 3. Sejarah Transaksi
-      const { data: txns, error: txnErr } = await db
+      // Senarai 20 transaksi terkini
+      const { data: txns } = await db
         .from('money_transactions')
         .select('*')
         .order('created_at', { ascending: false })
@@ -237,6 +251,7 @@
       `).join('');
     }
 
+    // --- 5. SIMPAN TRANSAKSI KE DATABASE ---
     async function submitTransaction() {
       const amtInput = document.getElementById('txnAmount');
       const descInput = document.getElementById('txnDesc');
@@ -251,7 +266,7 @@
       btn.disabled = true;
       btn.innerText = "Memproses...";
 
-      // 1. Simpan rekod transaksi
+      // 1. Rekod pergerakan duit
       const { error: txnErr } = await db.from('money_transactions').insert([{
         account_id: currentAccount,
         type: currentType,
@@ -267,7 +282,7 @@
         return;
       }
 
-      // 2. Kemas kini baki pada akaun
+      // 2. Kemas kini baki akaun utama
       const { data: acc } = await db.from('money_accounts').select('balance').eq('id', currentAccount).single();
       let newBalance = Number(acc ? acc.balance : 0);
       if (currentType === 'expense') {
