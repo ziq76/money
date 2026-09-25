@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <title>Capital Allocator | 4 Accounts</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;600;800&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="bg-black text-zinc-100 min-h-screen flex flex-col items-center p-4">
+
+  <main class="w-full max-w-md my-3 space-y-4">
+    
+    <!-- Header -->
+    <header class="border-b border-zinc-900 pb-3 flex justify-between items-baseline">
+      <div>
+        <h1 class="text-[10px] font-bold uppercase tracking-[0.25em] text-zinc-500">ALLOCATION PROTOCOL</h1>
+        <div class="text-xl font-extrabold tracking-tight text-white">MONEY TRACKER</div>
+      </div>
+      <div id="todayDate" class="mono text-xs text-zinc-500">2026-09-25</div>
+    </header>
+
+    <!-- Khas: Status Harian Makan RHB (RM12/Hari) -->
+    <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
+      <div class="flex justify-between items-center text-xs">
+        <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
+        <span class="text-[11px] text-zinc-500">Had: RM 12.00</span>
+      </div>
+      <div class="flex justify-between items-baseline">
+        <div class="space-y-0.5">
+          <span class="text-[10px] text-zinc-500 uppercase mono">Baki Hari Ini</span>
+          <div id="dailyFoodRemaining" class="text-3xl font-extrabold mono text-white">RM 12.00</div>
+        </div>
+        <div class="text-right">
+          <span class="text-[10px] text-zinc-500 uppercase mono">Dah Guna</span>
+          <div id="dailyFoodSpent" class="text-sm font-semibold mono text-zinc-400">RM 0.00</div>
+        </div>
+      </div>
+      <div class="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden">
+        <div id="dailyFoodBar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 100%;"></div>
+      </div>
+    </section>
+
+    <!-- 4 Kad Baki Akaun -->
+    <div class="grid grid-cols-2 gap-2 text-xs mono">
+      <!-- RHB -->
+      <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
+        <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
+          <span>RHB (Makan)</span>
+        </div>
+        <div id="bal-rhb" class="text-lg font-bold text-zinc-100">RM 0.00</div>
+      </div>
+      <!-- BIMB -->
+      <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
+        <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
+          <span>BIMB (Minyak)</span>
+        </div>
+        <div id="bal-bimb" class="text-lg font-bold text-zinc-100">RM 0.00</div>
+      </div>
+      <!-- BSN -->
+      <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
+        <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
+          <span>BSN (Kecemasan)</span>
+        </div>
+        <div id="bal-bsn" class="text-lg font-bold text-zinc-100">RM 0.00</div>
+      </div>
+      <!-- TNG -->
+      <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
+        <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
+          <span>TnG (Pelajaran)</span>
+        </div>
+        <div id="bal-tng" class="text-lg font-bold text-zinc-100">RM 0.00</div>
+      </div>
+    </div>
+
+    <!-- Input Transaksi Tolak / Tambah -->
+    <section class="bg-zinc-950 border border-zinc-900 rounded-2xl p-4 space-y-3">
+      <div class="flex justify-between items-center text-xs">
+        <span class="font-bold text-zinc-300 uppercase tracking-wider text-[11px]">Rekod Transaksi</span>
+        <!-- Pilihan Tolak / Tambah -->
+        <div class="flex bg-black p-0.5 rounded-lg border border-zinc-800 mono text-[11px]">
+          <button id="btnTypeExpense" onclick="setTxnType('expense')" class="px-2.5 py-1 rounded bg-zinc-800 text-rose-400 font-bold">TOLAK (-)</button>
+          <button id="btnTypeDeposit" onclick="setTxnType('deposit')" class="px-2.5 py-1 rounded text-zinc-500 hover:text-zinc-300 font-bold">TAMBAH (+)</button>
+        </div>
+      </div>
+
+      <!-- Pilih Akaun -->
+      <div class="grid grid-cols-4 gap-1.5 text-xs mono">
+        <button type="button" onclick="selectAccount('rhb', this)" class="acc-btn p-2 rounded-lg border border-emerald-500 bg-zinc-900 text-emerald-400 font-bold">RHB</button>
+        <button type="button" onclick="selectAccount('bimb', this)" class="acc-btn p-2 rounded-lg border border-zinc-800 bg-black text-zinc-400 font-bold">BIMB</button>
+        <button type="button" onclick="selectAccount('bsn', this)" class="acc-btn p-2 rounded-lg border border-zinc-800 bg-black text-zinc-400 font-bold">BSN</button>
+        <button type="button" onclick="selectAccount('tng', this)" class="acc-btn p-2 rounded-lg border border-zinc-800 bg-black text-zinc-400 font-bold">TnG</button>
+      </div>
+
+      <!-- Jumlah & Catatan -->
+      <div class="space-y-2">
+        <div class="relative">
+          <span class="absolute left-3 top-3 mono text-sm font-bold text-zinc-500">RM</span>
+          <input type="number" step="0.10" id="txnAmount" placeholder="0.00" 
+            class="w-full bg-black border border-zinc-800 rounded-xl py-2.5 pl-11 pr-3 text-base mono font-bold text-white focus:outline-none focus:border-zinc-500">
+        </div>
+        <input type="text" id="txnDesc" placeholder="Catatan (cth: Nasi ayam gepuk, Petronas, print lab)..." 
+          class="w-full bg-black border border-zinc-800 rounded-xl p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 placeholder:text-zinc-700">
+      </div>
+
+      <button id="submitTxnBtn" onclick="submitTransaction()"
+        class="w-full py-3.5 bg-zinc-100 hover:bg-white active:scale-[0.98] transition font-extrabold text-black rounded-xl text-xs uppercase tracking-widest mono">
+        Kemas Kini Baki
+      </button>
+    </section>
+
+    <!-- Log Transaksi Terkini -->
+    <section class="space-y-2">
+      <div class="flex justify-between items-center text-xs uppercase tracking-wider mono text-zinc-500">
+        <span>Transaksi Terkini</span>
+        <button onclick="loadData()" class="hover:text-zinc-300">Sync 🔄</button>
+      </div>
+      <div id="txnHistory" class="space-y-1.5 max-h-56 overflow-y-auto pr-1 text-xs mono">
+        <p class="text-zinc-700 text-center py-4">Memuat transaksi...</p>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://jrbbiqchqahyjhkxqmgr.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    let currentAccount = 'rhb';
+    let currentType = 'expense'; // 'expense' atau 'deposit'
+
+    function getTodayString() {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    const todayStr = getTodayString();
+    document.getElementById('todayDate').innerText = todayStr;
+
+    function setTxnType(type) {
+      currentType = type;
+      const btnExp = document.getElementById('btnTypeExpense');
+      const btnDep = document.getElementById('btnTypeDeposit');
+      if (type === 'expense') {
+        btnExp.className = "px-2.5 py-1 rounded bg-zinc-800 text-rose-400 font-bold";
+        btnDep.className = "px-2.5 py-1 rounded text-zinc-500 hover:text-zinc-300 font-bold";
+      } else {
+        btnDep.className = "px-2.5 py-1 rounded bg-zinc-800 text-emerald-400 font-bold";
+        btnExp.className = "px-2.5 py-1 rounded text-zinc-500 hover:text-zinc-300 font-bold";
+      }
+    }
+
+    function selectAccount(acc, el) {
+      currentAccount = acc;
+      document.querySelectorAll('.acc-btn').forEach(btn => {
+        btn.className = "acc-btn p-2 rounded-lg border border-zinc-800 bg-black text-zinc-400 font-bold";
+      });
+      el.className = "acc-btn p-2 rounded-lg border border-emerald-500 bg-zinc-900 text-emerald-400 font-bold";
+    }
+
+    async function loadData() {
+      // 1. Dapatkan Baki Akaun
+      const { data: accounts, error: accErr } = await db.from('money_accounts').select('*');
+      if (!accErr && accounts) {
+        accounts.forEach(a => {
+          const el = document.getElementById(`bal-${a.id}`);
+          if (el) el.innerText = `RM ${Number(a.balance).toFixed(2)}`;
+        });
+      }
+
+      // 2. Dapatkan Transaksi Hari Ini untuk RHB Makan (Had RM12)
+      const { data: todayTxns } = await db
+        .from('money_transactions')
+        .select('*')
+        .eq('account_id', 'rhb')
+        .eq('type', 'expense')
+        .eq('txn_date', todayStr);
+
+      let spentToday = 0;
+      if (todayTxns) {
+        spentToday = todayTxns.reduce((sum, t) => sum + Number(t.amount), 0);
+      }
+
+      const dailyLimit = 12.00;
+      const remainingToday = dailyLimit - spentToday;
+      
+      document.getElementById('dailyFoodSpent').innerText = `RM ${spentToday.toFixed(2)}`;
+      const remEl = document.getElementById('dailyFoodRemaining');
+      remEl.innerText = `RM ${remainingToday.toFixed(2)}`;
+      
+      if (remainingToday < 0) {
+        remEl.className = "text-3xl font-extrabold mono text-rose-500";
+      } else {
+        remEl.className = "text-3xl font-extrabold mono text-white";
+      }
+
+      const barPct = Math.max(0, Math.min(100, Math.round((remainingToday / dailyLimit) * 100)));
+      const bar = document.getElementById('dailyFoodBar');
+      bar.style.width = `${barPct}%`;
+      bar.className = remainingToday <= 3 ? "h-full bg-rose-500 transition-all duration-300" : "h-full bg-emerald-500 transition-all duration-300";
+
+      // 3. Sejarah Transaksi
+      const { data: txns, error: txnErr } = await db
+        .from('money_transactions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const historyEl = document.getElementById('txnHistory');
+      if (!txns || txns.length === 0) {
+        historyEl.innerHTML = `<p class="text-zinc-700 text-center py-4">Tiada transaksi direkodkan.</p>`;
+        return;
+      }
+
+      historyEl.innerHTML = txns.map(t => `
+        <div class="flex justify-between items-center p-2.5 rounded-xl bg-zinc-950 border border-zinc-900">
+          <div>
+            <div class="text-zinc-200 font-semibold uppercase text-[11px]">
+              ${t.account_id} • <span class="text-zinc-400 font-normal capitalize">${t.description || 'Transaksi'}</span>
+            </div>
+            <div class="text-[10px] text-zinc-600">${t.txn_date}</div>
+          </div>
+          <span class="font-bold text-xs ${t.type === 'expense' ? 'text-rose-400' : 'text-emerald-400'}">
+            ${t.type === 'expense' ? '-' : '+'} RM ${Number(t.amount).toFixed(2)}
+          </span>
+        </div>
+      `).join('');
+    }
+
+    async function submitTransaction() {
+      const amtInput = document.getElementById('txnAmount');
+      const descInput = document.getElementById('txnDesc');
+      const btn = document.getElementById('submitTxnBtn');
+
+      const amount = parseFloat(amtInput.value);
+      if (!amount || amount <= 0) {
+        alert("Sila masukkan nilai jumlah yang sah.");
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerText = "Memproses...";
+
+      // 1. Simpan rekod transaksi
+      const { error: txnErr } = await db.from('money_transactions').insert([{
+        account_id: currentAccount,
+        type: currentType,
+        amount: amount,
+        description: descInput.value.trim() || (currentType === 'expense' ? 'Perbelanjaan' : 'Top-up'),
+        txn_date: todayStr
+      }]);
+
+      if (txnErr) {
+        alert("Ralat simpan transaksi: " + txnErr.message);
+        btn.disabled = false;
+        btn.innerText = "Kemas Kini Baki";
+        return;
+      }
+
+      // 2. Kemas kini baki pada akaun
+      const { data: acc } = await db.from('money_accounts').select('balance').eq('id', currentAccount).single();
+      let newBalance = Number(acc ? acc.balance : 0);
+      if (currentType === 'expense') {
+        newBalance -= amount;
+      } else {
+        newBalance += amount;
+      }
+
+      await db.from('money_accounts').update({ balance: newBalance }).eq('id', currentAccount);
+
+      amtInput.value = "";
+      descInput.value = "";
+      btn.disabled = false;
+      btn.innerText = "Kemas Kini Baki";
+
+      await loadData();
+    }
+
+    loadData();
+  </script>
+</body>
+</html>
