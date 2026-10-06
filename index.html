@@ -13,7 +13,7 @@
     .mono { font-family: 'JetBrains Mono', monospace; }
   </style>
 </head>
-<body class="bg-black text-zinc-100 min-h-screen flex flex-col items-center p-4">
+<body class="bg-black text-zinc-100 min-h-screen flex flex-col items-center p-4 selection:bg-zinc-800">
 
   <main class="w-full max-w-md my-3 space-y-4">
     
@@ -26,7 +26,7 @@
       <div id="todayDate" class="mono text-xs text-zinc-500">Memuat tarikh...</div>
     </header>
 
-    <!-- Status Harian Makan RHB (Had RM12/Hari & Reset 12 AM) -->
+    <!-- Status Harian Makan RHB (Had RM12/Hari & Simpan BSN) -->
     <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
       <div class="flex justify-between items-center text-xs">
         <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
@@ -34,7 +34,7 @@
       </div>
       <div class="flex justify-between items-baseline">
         <div class="space-y-0.5">
-          <span class="text-[10px] text-zinc-500 uppercase mono">Baki Hari Ini</span>
+          <span class="text-[10px] text-zinc-500 uppercase mono">Baki Makan Hari Ini</span>
           <div id="dailyFoodRemaining" class="text-3xl font-extrabold mono text-white">RM 12.00</div>
         </div>
         <div class="text-right">
@@ -44,6 +44,14 @@
       </div>
       <div class="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden">
         <div id="dailyFoodBar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 100%;"></div>
+      </div>
+
+      <!-- Butang Manual Simpan Baki Makan ke BSN -->
+      <div class="pt-2 flex justify-between items-center border-t border-zinc-900/80">
+        <span class="text-[10px] text-zinc-500 mono">Tak habis belanja? Simpan baki:</span>
+        <button onclick="transferRemainingToBSN()" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] mono text-emerald-400 rounded-lg font-bold transition">
+          Pindah Baki Hari Ini ➔ BSN
+        </button>
       </div>
     </section>
 
@@ -66,9 +74,9 @@
       <!-- BSN -->
       <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
         <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
-          <span>BSN (Kecemasan)</span>
+          <span>BSN (Simpanan/Kecemasan)</span>
         </div>
-        <div id="bal-bsn" class="text-lg font-bold text-zinc-100">RM 0.00</div>
+        <div id="bal-bsn" class="text-lg font-bold text-emerald-400">RM 0.00</div>
       </div>
       <!-- TNG -->
       <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
@@ -137,7 +145,6 @@
     let currentAccount = 'rhb';
     let currentType = 'expense';
 
-    // Format tarikh tempatan YYYY-MM-DD
     function getTodayString() {
       const now = new Date();
       const yyyy = now.getFullYear();
@@ -149,17 +156,88 @@
     let todayStr = getTodayString();
     document.getElementById('todayDate').innerText = todayStr;
 
-    // --- 2. PEMERIKSA 12:00 TENGAH MALAM (AUTO-RESET) ---
+    // --- 2. PEMERIKSA 12:00 TENGAH MALAM ---
     setInterval(() => {
       const currentCheck = getTodayString();
       if (currentCheck !== todayStr) {
         todayStr = currentCheck;
         document.getElementById('todayDate').innerText = todayStr;
-        loadData(); // Baki makanan harian automatik kembali ke RM12
+        processMissedDaysThenLoad();
       }
-    }, 15000); // Semak setiap 15 saat
+    }, 15000);
 
-    // --- 3. LOGIK UI & INTERAKSI ---
+    // --- 3. AUTO-CATCH UP HARI TAK UPDATE (TOLAK RHB RM12, SIMPAN BSN RM12) ---
+    async function processMissedDaysThenLoad() {
+      // Dapatkan transaksi makan harian rhb yang terakhir
+      const { data: lastTxn } = await db
+        .from('money_transactions')
+        .select('txn_date')
+        .eq('account_id', 'rhb')
+        .order('txn_date', { ascending: false })
+        .limit(1);
+
+      if (lastTxn && lastTxn.length > 0) {
+        let lastDate = new Date(lastTxn[0].txn_date);
+        let todayDate = new Date(todayStr);
+
+        // Tambah 1 hari selepas transaksi terakhir
+        lastDate.setDate(lastDate.getDate() + 1);
+
+        let missedTransactions = [];
+        let totalMissedAmount = 0;
+
+        while (lastDate < todayDate) {
+          const y = lastDate.getFullYear();
+          const m = String(lastDate.getMonth() + 1).padStart(2, '0');
+          const d = String(lastDate.getDate()).padStart(2, '0');
+          const missedDateStr = `${y}-${m}-${d}`;
+
+          // Tolak RHB RM12
+          missedTransactions.push({
+            account_id: 'rhb',
+            type: 'expense',
+            amount: 12.00,
+            description: 'Auto-Simpan (Tak Update) ➔ BSN',
+            txn_date: missedDateStr
+          });
+
+          // Masuk BSN RM12
+          missedTransactions.push({
+            account_id: 'bsn',
+            type: 'deposit',
+            amount: 12.00,
+            description: 'Simpanan Makanan (Auto dari RHB)',
+            txn_date: missedDateStr
+          });
+
+          totalMissedAmount += 12.00;
+          lastDate.setDate(lastDate.getDate() + 1);
+        }
+
+        if (missedTransactions.length > 0) {
+          // Masukkan transaksi tertinggal
+          await db.from('money_transactions').insert(missedTransactions);
+
+          // Kemas kini baki akaun RHB & BSN
+          const { data: accounts } = await db.from('money_accounts').select('*');
+          if (accounts) {
+            const rhbAcc = accounts.find(a => a.id === 'rhb');
+            const bsnAcc = accounts.find(a => a.id === 'bsn');
+
+            if (rhbAcc) {
+              await db.from('money_accounts').update({ balance: Number(rhbAcc.balance) - totalMissedAmount }).eq('id', 'rhb');
+            }
+            if (bsnAcc) {
+              await db.from('money_accounts').update({ balance: Number(bsnAcc.balance) + totalMissedAmount }).eq('id', 'bsn');
+            }
+          }
+        }
+      }
+
+      await loadData();
+    }
+
+    // --- 4. LOGIK UI & INTERAKSI ---
     function setTxnType(type) {
       currentType = type;
       const btnExp = document.getElementById('btnTypeExpense');
@@ -181,18 +259,17 @@
       el.className = "acc-btn p-2 rounded-lg border border-emerald-500 bg-zinc-900 text-emerald-400 font-bold";
     }
 
-    // --- 4. MUAT TURUN DATA DARI SUPABASE ---
+    // --- 5. MUAT DATA ---
     async function loadData() {
-      // Dapatkan baki keseluruhan 4 akaun
-      const { data: accounts, error: accErr } = await db.from('money_accounts').select('*');
-      if (!accErr && accounts) {
+      const { data: accounts } = await db.from('money_accounts').select('*');
+      if (accounts) {
         accounts.forEach(a => {
           const el = document.getElementById(`bal-${a.id}`);
           if (el) el.innerText = `RM ${Number(a.balance).toFixed(2)}`;
         });
       }
 
-      // Dapatkan transaksi makan hari ini (RHB sahaja)
+      // Transaksi makan hari ini (RHB)
       const { data: todayTxns } = await db
         .from('money_transactions')
         .select('*')
@@ -223,7 +300,7 @@
       bar.style.width = `${barPct}%`;
       bar.className = remainingToday <= 3 ? "h-full bg-rose-500 transition-all duration-300" : "h-full bg-emerald-500 transition-all duration-300";
 
-      // Senarai 20 transaksi terkini
+      // 20 Transaksi Terkini
       const { data: txns } = await db
         .from('money_transactions')
         .select('*')
@@ -251,7 +328,7 @@
       `).join('');
     }
 
-    // --- 5. SIMPAN TRANSAKSI KE DATABASE ---
+    // --- 6. SIMPAN TRANSAKSI BIASA ---
     async function submitTransaction() {
       const amtInput = document.getElementById('txnAmount');
       const descInput = document.getElementById('txnDesc');
@@ -266,7 +343,6 @@
       btn.disabled = true;
       btn.innerText = "Memproses...";
 
-      // 1. Rekod pergerakan duit
       const { error: txnErr } = await db.from('money_transactions').insert([{
         account_id: currentAccount,
         type: currentType,
@@ -282,7 +358,6 @@
         return;
       }
 
-      // 2. Kemas kini baki akaun utama
       const { data: acc } = await db.from('money_accounts').select('balance').eq('id', currentAccount).single();
       let newBalance = Number(acc ? acc.balance : 0);
       if (currentType === 'expense') {
@@ -301,7 +376,66 @@
       await loadData();
     }
 
-    loadData();
+    // --- 7. MANUAL TRANSFER BAKI MAKAN HARI INI KE BSN ---
+    async function transferRemainingToBSN() {
+      const { data: todayTxns } = await db
+        .from('money_transactions')
+        .select('*')
+        .eq('account_id', 'rhb')
+        .eq('type', 'expense')
+        .eq('txn_date', todayStr);
+
+      let spentToday = 0;
+      if (todayTxns) {
+        spentToday = todayTxns.reduce((sum, t) => sum + Number(t.amount), 0);
+      }
+
+      const remaining = 12.00 - spentToday;
+      if (remaining <= 0) {
+        alert("Tiada baki peruntukan makan untuk dipindahkan hari ini.");
+        return;
+      }
+
+      if (!confirm(`Pindahkan baki makan RM ${remaining.toFixed(2)} dari RHB ke BSN sekarang?`)) {
+        return;
+      }
+
+      // 1. Rekod perbelanjaan di RHB (tolak baki)
+      await db.from('money_transactions').insert([{
+        account_id: 'rhb',
+        type: 'expense',
+        amount: remaining,
+        description: 'Simpan Baki Makan ➔ BSN',
+        txn_date: todayStr
+      }]);
+
+      // 2. Rekod deposit di BSN (tambah simpanan)
+      await db.from('money_transactions').insert([{
+        account_id: 'bsn',
+        type: 'deposit',
+        amount: remaining,
+        description: 'Simpanan Baki Makanan dari RHB',
+        txn_date: todayStr
+      }]);
+
+      // 3. Kemas kini baki akaun
+      const { data: accounts } = await db.from('money_accounts').select('*');
+      if (accounts) {
+        const rhbAcc = accounts.find(a => a.id === 'rhb');
+        const bsnAcc = accounts.find(a => a.id === 'bsn');
+
+        if (rhbAcc) {
+          await db.from('money_accounts').update({ balance: Number(rhbAcc.balance) - remaining }).eq('id', 'rhb');
+        }
+        if (bsnAcc) {
+          await db.from('money_accounts').update({ balance: Number(bsnAcc.balance) + remaining }).eq('id', 'bsn');
+        }
+      }
+
+      await loadData();
+    }
+
+    processMissedDaysThenLoad();
   </script>
 </body>
 </html>
