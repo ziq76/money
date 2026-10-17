@@ -30,7 +30,7 @@
     <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
       <div class="flex justify-between items-center text-xs">
         <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
-        <span class="text-[11px] text-zinc-500">Had: RM 13.50 (Reset 12:00 AM)</span>
+        <span class="text-[11px] text-zinc-500">Had: RM 13.50 / hari (Kitaran 7 Hari: RM 94.50)</span>
       </div>
       <div class="flex justify-between items-baseline">
         <div class="space-y-0.5">
@@ -38,7 +38,7 @@
           <div id="dailyFoodRemaining" class="text-3xl font-extrabold mono text-white">RM 13.50</div>
         </div>
         <div class="text-right">
-          <span class="text-[10px] text-zinc-500 uppercase mono">Dah Guna</span>
+          <span class="text-[10px] text-zinc-500 uppercase mono">Dah Guna Hari Ini</span>
           <div id="dailyFoodSpent" class="text-sm font-semibold mono text-zinc-400">RM 0.00</div>
         </div>
       </div>
@@ -48,7 +48,7 @@
 
       <!-- Butang Manual Simpan Baki Makan ke BSN -->
       <div class="pt-2 flex justify-between items-center border-t border-zinc-900/80">
-        <span class="text-[10px] text-zinc-500 mono">Tak habis belanja? Simpan baki:</span>
+        <span class="text-[10px] text-zinc-500 mono">Tak habis belanja? Simpan:</span>
         <button onclick="transferRemainingToBSN()" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] mono text-emerald-400 rounded-lg font-bold transition">
           Pindah Baki Hari Ini ➔ BSN
         </button>
@@ -58,9 +58,10 @@
     <!-- 4 Kad Baki Akaun -->
     <div class="grid grid-cols-2 gap-2 text-xs mono">
       <!-- RHB -->
-      <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
-        <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
+      <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1 relative">
+        <div class="text-[10px] text-zinc-500 uppercase flex justify-between items-center">
           <span>RHB (Makan)</span>
+          <button onclick="resetRhbToBaseline()" title="Set semula ke asas RM 94.50" class="text-[9px] text-zinc-600 hover:text-emerald-400">⚙️ RM94.50</button>
         </div>
         <div id="bal-rhb" class="text-lg font-bold text-zinc-100">RM 0.00</div>
       </div>
@@ -74,7 +75,7 @@
       <!-- BSN -->
       <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
         <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
-          <span>BSN (Simpanan/Kecemasan)</span>
+          <span>BSN (Simpanan)</span>
         </div>
         <div id="bal-bsn" class="text-lg font-bold text-emerald-400">RM 0.00</div>
       </div>
@@ -91,7 +92,6 @@
     <section class="bg-zinc-950 border border-zinc-900 rounded-2xl p-4 space-y-3">
       <div class="flex justify-between items-center text-xs">
         <span class="font-bold text-zinc-300 uppercase tracking-wider text-[11px]">Rekod Transaksi</span>
-        <!-- Pilihan Tolak / Tambah -->
         <div class="flex bg-black p-0.5 rounded-lg border border-zinc-800 mono text-[11px]">
           <button id="btnTypeExpense" onclick="setTxnType('expense')" class="px-2.5 py-1 rounded bg-zinc-800 text-rose-400 font-bold">TOLAK (-)</button>
           <button id="btnTypeDeposit" onclick="setTxnType('deposit')" class="px-2.5 py-1 rounded text-zinc-500 hover:text-zinc-300 font-bold">TAMBAH (+)</button>
@@ -137,12 +137,11 @@
   </main>
 
   <script>
-    // --- 1. KONFIGURASI SUPABASE ---
     const SUPABASE_URL = "https://jrbbiqchqahyjhkxqmgr.supabase.co";
     const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    const DAILY_FOOD_LIMIT = 13.50; // Had baharu belanja makan harian
+    const DAILY_FOOD_LIMIT = 13.50; // RM 13.50 / hari
 
     let currentAccount = 'rhb';
     let currentType = 'expense';
@@ -158,7 +157,6 @@
     let todayStr = getTodayString();
     document.getElementById('todayDate').innerText = todayStr;
 
-    // --- 2. PEMERIKSA 12:00 TENGAH MALAM ---
     setInterval(() => {
       const currentCheck = getTodayString();
       if (currentCheck !== todayStr) {
@@ -168,7 +166,17 @@
       }
     }, 15000);
 
-    // --- 3. AUTO-CATCH UP HARI TAK UPDATE DENGAN AUDIT BAKI ---
+    // Fungsi utiliti jika ingin set baki RHB ke RM 94.50 secara automatik dari UI
+    async function resetRhbToBaseline() {
+      if (!confirm("Set semula baki RHB kepada RM 94.50 (Peruntukan Penuh)?")) return;
+      const { error } = await db.from('money_accounts').update({ balance: 94.50 }).eq('id', 'rhb');
+      if (error) {
+        alert("Ralat: " + error.message);
+      } else {
+        await loadData();
+      }
+    }
+
     async function processMissedDaysThenLoad() {
       const { data: lastTxn } = await db
         .from('money_transactions')
@@ -234,7 +242,6 @@
       await loadData();
     }
 
-    // --- 4. LOGIK UI & INTERAKSI ---
     function setTxnType(type) {
       currentType = type;
       const btnExp = document.getElementById('btnTypeExpense');
@@ -256,7 +263,6 @@
       el.className = "acc-btn p-2 rounded-lg border border-emerald-500 bg-zinc-900 text-emerald-400 font-bold";
     }
 
-    // --- 5. MUAT DATA ---
     async function loadData() {
       const { data: accounts } = await db.from('money_accounts').select('*');
       if (accounts) {
@@ -332,7 +338,6 @@
       }).join('');
     }
 
-    // --- 6. SIMPAN TRANSAKSI BIASA DENGAN AUDIT BAKI SEBELUM & SELEPAS ---
     async function submitTransaction() {
       const amtInput = document.getElementById('txnAmount');
       const descInput = document.getElementById('txnDesc');
@@ -378,7 +383,6 @@
       await loadData();
     }
 
-    // --- 7. MANUAL TRANSFER BAKI MAKAN KE BSN DENGAN AUDIT BAKI ---
     async function transferRemainingToBSN() {
       const { data: todayTxns } = await db
         .from('money_transactions')
