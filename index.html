@@ -30,11 +30,11 @@
     <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
       <div class="flex justify-between items-center text-xs">
         <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
-        <span class="text-[11px] text-zinc-500">Had: RM 13.50 / hari (Kitaran 7 Hari: RM 94.50)</span>
+        <span class="text-[11px] text-zinc-500">Had: RM 13.50 (Reset 12:00 AM)</span>
       </div>
       <div class="flex justify-between items-baseline">
         <div class="space-y-0.5">
-          <span class="text-[10px] text-zinc-500 uppercase mono">Baki Makan Hari Ini</span>
+          <span class="text-[10px] text-zinc-500 uppercase mono">Baki Kuota Hari Ini</span>
           <div id="dailyFoodRemaining" class="text-3xl font-extrabold mono text-white">RM 13.50</div>
         </div>
         <div class="text-right">
@@ -48,7 +48,7 @@
 
       <!-- Butang Manual Simpan Baki Makan ke BSN -->
       <div class="pt-2 flex justify-between items-center border-t border-zinc-900/80">
-        <span class="text-[10px] text-zinc-500 mono">Tak habis belanja? Simpan:</span>
+        <span class="text-[10px] text-zinc-500 mono">Tak habis belanja? Simpan baki:</span>
         <button onclick="transferRemainingToBSN()" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] mono text-emerald-400 rounded-lg font-bold transition">
           Pindah Baki Hari Ini ➔ BSN
         </button>
@@ -57,11 +57,10 @@
 
     <!-- 4 Kad Baki Akaun -->
     <div class="grid grid-cols-2 gap-2 text-xs mono">
-      <!-- RHB -->
-      <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1 relative">
-        <div class="text-[10px] text-zinc-500 uppercase flex justify-between items-center">
+      <!-- RHB (Baki Sebenar Mengalir Turun) -->
+      <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
+        <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
           <span>RHB (Makan)</span>
-          <button onclick="resetRhbToBaseline()" title="Set semula ke asas RM 94.50" class="text-[9px] text-zinc-600 hover:text-emerald-400">⚙️ RM94.50</button>
         </div>
         <div id="bal-rhb" class="text-lg font-bold text-zinc-100">RM 0.00</div>
       </div>
@@ -141,7 +140,7 @@
     const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    const DAILY_FOOD_LIMIT = 13.50; // RM 13.50 / hari
+    const DAILY_FOOD_LIMIT = 13.50; // Kuota had harian
 
     let currentAccount = 'rhb';
     let currentType = 'expense';
@@ -157,6 +156,7 @@
     let todayStr = getTodayString();
     document.getElementById('todayDate').innerText = todayStr;
 
+    // Semakan 12:00 tengah malam untuk reset kuota harian & auto-catch up
     setInterval(() => {
       const currentCheck = getTodayString();
       if (currentCheck !== todayStr) {
@@ -166,17 +166,7 @@
       }
     }, 15000);
 
-    // Fungsi utiliti jika ingin set baki RHB ke RM 94.50 secara automatik dari UI
-    async function resetRhbToBaseline() {
-      if (!confirm("Set semula baki RHB kepada RM 94.50 (Peruntukan Penuh)?")) return;
-      const { error } = await db.from('money_accounts').update({ balance: 94.50 }).eq('id', 'rhb');
-      if (error) {
-        alert("Ralat: " + error.message);
-      } else {
-        await loadData();
-      }
-    }
-
+    // Auto simpan baki hari yang tertinggal ke BSN
     async function processMissedDaysThenLoad() {
       const { data: lastTxn } = await db
         .from('money_transactions')
@@ -402,7 +392,7 @@
         return;
       }
 
-      if (!confirm(`Pindahkan baki makan RM ${remaining.toFixed(2)} dari RHB ke BSN sekarang?`)) {
+      if (!confirm(`Pindahkan baki kuota makan RM ${remaining.toFixed(2)} dari RHB ke BSN sekarang?`)) {
         return;
       }
 
@@ -421,7 +411,7 @@
           account_id: 'rhb',
           type: 'expense',
           amount: remaining,
-          description: 'Simpan Baki Makan ➔ BSN',
+          description: 'Simpan Baki Kuota Makan ➔ BSN',
           txn_date: todayStr,
           balance_before: rhbBefore,
           balance_after: rhbAfter
