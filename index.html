@@ -46,11 +46,11 @@
         <div id="dailyFoodBar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 100%;"></div>
       </div>
 
-      <!-- Butang Manual Simpan Baki Makan ke BSN -->
+      <!-- Status Auto-Sweep & Butang Simpan Baki Manual -->
       <div class="pt-2 flex justify-between items-center border-t border-zinc-900/80">
-        <span class="text-[10px] text-zinc-500 mono">Tak habis belanja? Simpan baki:</span>
+        <span class="text-[10px] text-zinc-500 mono">Baki tak habis auto-sweep ke BSN (12 AM):</span>
         <button onclick="transferRemainingToBSN()" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] mono text-emerald-400 rounded-lg font-bold transition">
-          Pindah Baki Hari Ini ➔ BSN
+          Simpan Baki Awal ➔ BSN
         </button>
       </div>
     </section>
@@ -140,7 +140,7 @@
     const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    const DAILY_FOOD_LIMIT = 13.50; // Kuota had harian
+    const DAILY_FOOD_LIMIT = 13.50; // Had siling perbelanjaan sehari
 
     let currentAccount = 'rhb';
     let currentType = 'expense';
@@ -156,18 +156,23 @@
     let todayStr = getTodayString();
     document.getElementById('todayDate').innerText = todayStr;
 
-    // Semakan 12:00 tengah malam untuk reset kuota harian & auto-catch up
+    // Semak setiap 15 saat sama ada sudah melangkah ke hari baharu (12:00 AM)
     setInterval(() => {
       const currentCheck = getTodayString();
       if (currentCheck !== todayStr) {
         todayStr = currentCheck;
         document.getElementById('todayDate').innerText = todayStr;
-        processMissedDaysThenLoad();
+        processAutoSweepThenLoad();
       }
     }, 15000);
 
-    // Auto simpan baki hari yang tertinggal ke BSN
-    async function processMissedDaysThenLoad() {
+    // =========================================================================
+    // LOGIK AUTO-SWEEP: 
+    // Mengira perbelanjaan sebenar hari semalam/tertinggal, tolak daripada RM13.50,
+    // dan pindahkan baki sebenar yang tidak habis ke BSN secara automatik.
+    // =========================================================================
+    async function processAutoSweepThenLoad() {
+      // Dapatkan tarikh transaksi terakhir bagi akaun RHB
       const { data: lastTxn } = await db
         .from('money_transactions')
         .select('txn_date')
@@ -176,9 +181,9 @@
         .limit(1);
 
       if (lastTxn && lastTxn.length > 0) {
-        let lastDate = new Date(lastTxn[0].txn_date);
+        let checkDate = new Date(lastTxn[0].txn_date);
         let todayDate = new Date(todayStr);
-        lastDate.setDate(lastDate.getDate() + 1);
+        checkDate.setDate(checkDate.getDate() + 1);
 
         const { data: accounts } = await db.from('money_accounts').select('*');
         let rhbAcc = accounts ? accounts.find(a => a.id === 'rhb') : null;
@@ -187,43 +192,66 @@
         let curRhbBal = rhbAcc ? Number(rhbAcc.balance) : 0;
         let curBsnBal = bsnAcc ? Number(bsnAcc.balance) : 0;
 
-        let missedTransactions = [];
+        let sweepTransactions = [];
 
-        while (lastDate < todayDate) {
-          const y = lastDate.getFullYear();
-          const m = String(lastDate.getMonth() + 1).padStart(2, '0');
-          const d = String(lastDate.getDate()).padStart(2, '0');
-          const missedDateStr = `${y}-${m}-${d}`;
+        while (checkDate < todayDate) {
+          const y = checkDate.getFullYear();
+          const m = String(checkDate.getMonth() + 1).padStart(2, '0');
+          const d = String(checkDate.getDate()).padStart(2, '0');
+          const targetDateStr = `${y}-${m}-${d}`;
 
-          const newRhb = curRhbBal - DAILY_FOOD_LIMIT;
-          missedTransactions.push({
-            account_id: 'rhb',
-            type: 'expense',
-            amount: DAILY_FOOD_LIMIT,
-            description: 'Auto-Simpan (Tak Update) ➔ BSN',
-            txn_date: missedDateStr,
-            balance_before: curRhbBal,
-            balance_after: newRhb
-          });
-          curRhbBal = newRhb;
+          // Semak berapa banyak yang sudah dibelanjakan pada hari tersebut
+          const { data: pastDayTxns } = await db
+            .from('money_transactions')
+            .select('*')
+            .eq('account_id', 'rhb')
+            .eq('type', 'expense')
+            .eq('txn_date', targetDateStr);
 
-          const newBsn = curBsnBal + DAILY_FOOD_LIMIT;
-          missedTransactions.push({
-            account_id: 'bsn',
-            type: 'deposit',
-            amount: DAILY_FOOD_LIMIT,
-            description: 'Simpanan Makanan (Auto dari RHB)',
-            txn_date: missedDateStr,
-            balance_before: curBsnBal,
-            balance_after: newBsn
-          });
-          curBsnBal = newBsn;
+          // Kira jumlah yang dibelanjakan (elakkan mengira transaksi sweep jika ada)
+          let spentOnThatDay = 0;
+          if (pastDayTxns && pastDayTxns.length > 0) {
+            spentOnThatDay = pastDayTxns
+              .filter(t => !t.description.includes('➔ BSN'))
+              .reduce((sum, t) => sum + Number(t.amount), 0);
+          }
 
-          lastDate.setDate(lastDate.getDate() + 1);
+          // Baki yang tidak habis diguna pada hari berkenaan
+          const unspentRemaining = Math.max(0, DAILY_FOOD_LIMIT - spentOnThatDay);
+
+          if (unspentRemaining > 0 && curRhbBal >= unspentRemaining) {
+            const newRhb = curRhbBal - unspentRemaining;
+            const newBsn = curBsnBal + unspentRemaining;
+
+            sweepTransactions.push({
+              account_id: 'rhb',
+              type: 'expense',
+              amount: unspentRemaining,
+              description: `Auto-Sweep Baki Semalam (Jimat RM${unspentRemaining.toFixed(2)}) ➔ BSN`,
+              txn_date: targetDateStr,
+              balance_before: curRhbBal,
+              balance_after: newRhb
+            });
+
+            sweepTransactions.push({
+              account_id: 'bsn',
+              type: 'deposit',
+              amount: unspentRemaining,
+              description: `Simpanan Baki Makanan (${targetDateStr}) dari RHB`,
+              txn_date: targetDateStr,
+              balance_before: curBsnBal,
+              balance_after: newBsn
+            });
+
+            curRhbBal = newRhb;
+            curBsnBal = newBsn;
+          }
+
+          checkDate.setDate(checkDate.getDate() + 1);
         }
 
-        if (missedTransactions.length > 0) {
-          await db.from('money_transactions').insert(missedTransactions);
+        if (sweepTransactions.length > 0) {
+          await db.from('money_transactions').insert(sweepTransactions);
           await db.from('money_accounts').update({ balance: curRhbBal }).eq('id', 'rhb');
           await db.from('money_accounts').update({ balance: curBsnBal }).eq('id', 'bsn');
         }
@@ -254,6 +282,7 @@
     }
 
     async function loadData() {
+      // 1. Muat baki 4 akaun
       const { data: accounts } = await db.from('money_accounts').select('*');
       if (accounts) {
         accounts.forEach(a => {
@@ -262,6 +291,7 @@
         });
       }
 
+      // 2. Muat transaksi hari ini untuk kira baki makan harian
       const { data: todayTxns } = await db
         .from('money_transactions')
         .select('*')
@@ -271,9 +301,13 @@
 
       let spentToday = 0;
       if (todayTxns) {
-        spentToday = todayTxns.reduce((sum, t) => sum + Number(t.amount), 0);
+        // Abaikan transaksi pemindahan simpanan ke BSN jika dibuat harini
+        spentToday = todayTxns
+          .filter(t => !t.description.includes('➔ BSN'))
+          .reduce((sum, t) => sum + Number(t.amount), 0);
       }
 
+      // Nilai automatik bermula semula pada RM 13.50 setiap hari
       const remainingToday = DAILY_FOOD_LIMIT - spentToday;
       
       document.getElementById('dailyFoodSpent').innerText = `RM ${spentToday.toFixed(2)}`;
@@ -291,6 +325,7 @@
       bar.style.width = `${barPct}%`;
       bar.className = remainingToday <= 3 ? "h-full bg-rose-500 transition-all duration-300" : "h-full bg-emerald-500 transition-all duration-300";
 
+      // 3. Muat senarai transaksi terkini
       const { data: txns } = await db
         .from('money_transactions')
         .select('*')
@@ -383,7 +418,9 @@
 
       let spentToday = 0;
       if (todayTxns) {
-        spentToday = todayTxns.reduce((sum, t) => sum + Number(t.amount), 0);
+        spentToday = todayTxns
+          .filter(t => !t.description.includes('➔ BSN'))
+          .reduce((sum, t) => sum + Number(t.amount), 0);
       }
 
       const remaining = DAILY_FOOD_LIMIT - spentToday;
@@ -433,7 +470,7 @@
       await loadData();
     }
 
-    processMissedDaysThenLoad();
+    processAutoSweepThenLoad();
   </script>
 </body>
 </html>
