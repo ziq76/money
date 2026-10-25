@@ -26,27 +26,16 @@
       <div id="todayDate" class="mono text-xs text-zinc-500">Memuat tarikh...</div>
     </header>
 
-    <!-- Status Harian Makan RHB & Tetapan Nilai Harian -->
-    <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-3">
+    <!-- Status Harian Makan RHB (Had RM13.50/Hari & Simpan BSN) -->
+    <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
       <div class="flex justify-between items-center text-xs">
         <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
-        <span class="text-[11px] text-zinc-500">Auto Potong 12:00 AM</span>
+        <span class="text-[11px] text-zinc-500">Had: RM 13.50 (Potong Auto 12:00 AM)</span>
       </div>
-
-      <!-- Kotak Ubah Nilai Harian -->
-      <div class="bg-black/60 border border-zinc-800 rounded-xl p-2.5 flex items-center justify-between gap-2">
-        <div class="text-[10px] uppercase mono text-zinc-400">Nilai Peruntukan Hari Ini:</div>
-        <div class="flex items-center gap-1.5">
-          <span class="mono text-xs font-bold text-zinc-500">RM</span>
-          <input type="number" step="0.10" id="dailyLimitInput" value="445.50" onchange="updateDailyLimit(this.value)"
-            class="w-24 bg-zinc-900 border border-zinc-700 rounded-lg py-1 px-2 text-sm mono font-bold text-white text-right focus:outline-none focus:border-emerald-500">
-        </div>
-      </div>
-
       <div class="flex justify-between items-baseline">
         <div class="space-y-0.5">
           <span class="text-[10px] text-zinc-500 uppercase mono">Baki Kuota Hari Ini</span>
-          <div id="dailyFoodRemaining" class="text-3xl font-extrabold mono text-white">RM 445.50</div>
+          <div id="dailyFoodRemaining" class="text-3xl font-extrabold mono text-white">RM 13.50</div>
         </div>
         <div class="text-right">
           <span class="text-[10px] text-zinc-500 uppercase mono">Dah Guna Hari Ini</span>
@@ -59,7 +48,7 @@
 
       <!-- Status Auto-Sweep & Butang Simpan Baki Manual -->
       <div class="pt-2 flex justify-between items-center border-t border-zinc-900/80">
-        <span class="text-[10px] text-zinc-500 mono">Baki tak habis auto-sweep ke BSN:</span>
+        <span class="text-[10px] text-zinc-500 mono">Auto potong RM13.50 & baki ke BSN (12 AM):</span>
         <button onclick="transferRemainingToBSN()" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] mono text-emerald-400 rounded-lg font-bold transition">
           Simpan Baki Awal ➔ BSN
         </button>
@@ -151,9 +140,7 @@
     const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    // Ambil nilai simpanan tempatan (localStorage) atau default kepada 445.50
-    let DAILY_FOOD_LIMIT = parseFloat(localStorage.getItem('daily_food_limit')) || 445.50;
-    document.getElementById('dailyLimitInput').value = DAILY_FOOD_LIMIT.toFixed(2);
+    const DAILY_FOOD_LIMIT = 13.50; // Peruntukan makan harian
 
     let currentAccount = 'rhb';
     let currentType = 'expense';
@@ -169,15 +156,7 @@
     let todayStr = getTodayString();
     document.getElementById('todayDate').innerText = todayStr;
 
-    function updateDailyLimit(val) {
-      const parsed = parseFloat(val);
-      if (parsed > 0) {
-        DAILY_FOOD_LIMIT = parsed;
-        localStorage.setItem('daily_food_limit', DAILY_FOOD_LIMIT);
-        loadData();
-      }
-    }
-
+    // Semak setiap 15 saat sama ada sudah melangkah ke hari baharu (12:00 AM)
     setInterval(() => {
       const currentCheck = getTodayString();
       if (currentCheck !== todayStr) {
@@ -187,6 +166,11 @@
       }
     }, 15000);
 
+    // =========================================================================
+    // LOGIK AUTO-SWEEP & POTONGAN HARIAN RM13.50:
+    // Setiap hari, sistem tolak RM13.50 dari akaun RHB (sebagai peruntukan harian)
+    // dan jika ada baki tak habis, pindahkan lebihan ke BSN.
+    // =========================================================================
     async function processAutoSweepThenLoad() {
       const { data: lastTxn } = await db
         .from('money_transactions')
@@ -215,19 +199,22 @@
           const d = String(checkDate.getDate()).padStart(2, '0');
           const targetDateStr = `${y}-${m}-${d}`;
 
+          // Semak perbelanjaan sebenar pada hari tersebut
           const { data: pastDayTxns } = await db
             .from('money_transactions')
             .select('*')
             .eq('account_id', 'rhb')
+            .eq('type', 'expense')
             .eq('txn_date', targetDateStr);
 
           let spentOnThatDay = 0;
           if (pastDayTxns && pastDayTxns.length > 0) {
             spentOnThatDay = pastDayTxns
-              .filter(t => t.type === 'expense' && !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
+              .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
               .reduce((sum, t) => sum + Number(t.amount), 0);
           }
 
+          // 1. Rekod potongan automatik harian RM13.50 dari RHB (jika belum wujud)
           const hasDailyDeduction = pastDayTxns && pastDayTxns.some(t => t.description.includes('Potong Harian'));
           if (!hasDailyDeduction && curRhbBal >= DAILY_FOOD_LIMIT) {
             curRhbBal -= DAILY_FOOD_LIMIT;
@@ -235,13 +222,14 @@
               account_id: 'rhb',
               type: 'expense',
               amount: DAILY_FOOD_LIMIT,
-              description: `Potong Harian Makan (RM ${DAILY_FOOD_LIMIT.toFixed(2)})`,
+              description: 'Potong Harian Makan (RM 13.50)',
               txn_date: targetDateStr,
               balance_before: curRhbBal + DAILY_FOOD_LIMIT,
               balance_after: curRhbBal
             });
           }
 
+          // 2. Kira baki tak habis (daripada RM13.50) untuk disapu ke BSN
           const unspentRemaining = Math.max(0, DAILY_FOOD_LIMIT - spentOnThatDay);
 
           if (unspentRemaining > 0 && curRhbBal >= unspentRemaining) {
@@ -304,6 +292,7 @@
     }
 
     async function loadData() {
+      // 1. Muat baki 4 akaun
       const { data: accounts } = await db.from('money_accounts').select('*');
       if (accounts) {
         accounts.forEach(a => {
@@ -312,16 +301,18 @@
         });
       }
 
+      // 2. Muat transaksi hari ini untuk kira baki makan harian
       const { data: todayTxns } = await db
         .from('money_transactions')
         .select('*')
         .eq('account_id', 'rhb')
+        .eq('type', 'expense')
         .eq('txn_date', todayStr);
 
       let spentToday = 0;
       if (todayTxns) {
         spentToday = todayTxns
-          .filter(t => t.type === 'expense' && !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
+          .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
           .reduce((sum, t) => sum + Number(t.amount), 0);
       }
 
@@ -340,8 +331,9 @@
       const barPct = Math.max(0, Math.min(100, Math.round((remainingToday / DAILY_FOOD_LIMIT) * 100)));
       const bar = document.getElementById('dailyFoodBar');
       bar.style.width = `${barPct}%`;
-      bar.className = remainingToday <= (DAILY_FOOD_LIMIT * 0.2) ? "h-full bg-rose-500 transition-all duration-300" : "h-full bg-emerald-500 transition-all duration-300";
+      bar.className = remainingToday <= 3 ? "h-full bg-rose-500 transition-all duration-300" : "h-full bg-emerald-500 transition-all duration-300";
 
+      // 3. Muat senarai transaksi terkini
       const { data: txns } = await db
         .from('money_transactions')
         .select('*')
@@ -429,12 +421,13 @@
         .from('money_transactions')
         .select('*')
         .eq('account_id', 'rhb')
+        .eq('type', 'expense')
         .eq('txn_date', todayStr);
 
       let spentToday = 0;
       if (todayTxns) {
         spentToday = todayTxns
-          .filter(t => t.type === 'expense' && !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
+          .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
           .reduce((sum, t) => sum + Number(t.amount), 0);
       }
 
