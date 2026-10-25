@@ -30,7 +30,7 @@
     <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
       <div class="flex justify-between items-center text-xs">
         <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
-        <span class="text-[11px] text-zinc-500">Had: RM 13.50 (Reset 12:00 AM)</span>
+        <span class="text-[11px] text-zinc-500">Had: RM 13.50 (Potong Auto 12:00 AM)</span>
       </div>
       <div class="flex justify-between items-baseline">
         <div class="space-y-0.5">
@@ -48,7 +48,7 @@
 
       <!-- Status Auto-Sweep & Butang Simpan Baki Manual -->
       <div class="pt-2 flex justify-between items-center border-t border-zinc-900/80">
-        <span class="text-[10px] text-zinc-500 mono">Baki tak habis auto-sweep ke BSN (12 AM):</span>
+        <span class="text-[10px] text-zinc-500 mono">Auto potong RM13.50 & baki ke BSN (12 AM):</span>
         <button onclick="transferRemainingToBSN()" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] mono text-emerald-400 rounded-lg font-bold transition">
           Simpan Baki Awal ➔ BSN
         </button>
@@ -140,7 +140,7 @@
     const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    const DAILY_FOOD_LIMIT = 13.50; // Had siling perbelanjaan sehari
+    const DAILY_FOOD_LIMIT = 13.50; // Peruntukan makan harian
 
     let currentAccount = 'rhb';
     let currentType = 'expense';
@@ -167,12 +167,11 @@
     }, 15000);
 
     // =========================================================================
-    // LOGIK AUTO-SWEEP: 
-    // Mengira perbelanjaan sebenar hari semalam/tertinggal, tolak daripada RM13.50,
-    // dan pindahkan baki sebenar yang tidak habis ke BSN secara automatik.
+    // LOGIK AUTO-SWEEP & POTONGAN HARIAN RM13.50:
+    // Setiap hari, sistem tolak RM13.50 dari akaun RHB (sebagai peruntukan harian)
+    // dan jika ada baki tak habis, pindahkan lebihan ke BSN.
     // =========================================================================
     async function processAutoSweepThenLoad() {
-      // Dapatkan tarikh transaksi terakhir bagi akaun RHB
       const { data: lastTxn } = await db
         .from('money_transactions')
         .select('txn_date')
@@ -192,7 +191,7 @@
         let curRhbBal = rhbAcc ? Number(rhbAcc.balance) : 0;
         let curBsnBal = bsnAcc ? Number(bsnAcc.balance) : 0;
 
-        let sweepTransactions = [];
+        let batchTransactions = [];
 
         while (checkDate < todayDate) {
           const y = checkDate.getFullYear();
@@ -200,7 +199,7 @@
           const d = String(checkDate.getDate()).padStart(2, '0');
           const targetDateStr = `${y}-${m}-${d}`;
 
-          // Semak berapa banyak yang sudah dibelanjakan pada hari tersebut
+          // Semak perbelanjaan sebenar pada hari tersebut
           const { data: pastDayTxns } = await db
             .from('money_transactions')
             .select('*')
@@ -208,50 +207,61 @@
             .eq('type', 'expense')
             .eq('txn_date', targetDateStr);
 
-          // Kira jumlah yang dibelanjakan (elakkan mengira transaksi sweep jika ada)
           let spentOnThatDay = 0;
           if (pastDayTxns && pastDayTxns.length > 0) {
             spentOnThatDay = pastDayTxns
-              .filter(t => !t.description.includes('➔ BSN'))
+              .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
               .reduce((sum, t) => sum + Number(t.amount), 0);
           }
 
-          // Baki yang tidak habis diguna pada hari berkenaan
+          // 1. Rekod potongan automatik harian RM13.50 dari RHB (jika belum wujud)
+          const hasDailyDeduction = pastDayTxns && pastDayTxns.some(t => t.description.includes('Potong Harian'));
+          if (!hasDailyDeduction && curRhbBal >= DAILY_FOOD_LIMIT) {
+            curRhbBal -= DAILY_FOOD_LIMIT;
+            batchTransactions.push({
+              account_id: 'rhb',
+              type: 'expense',
+              amount: DAILY_FOOD_LIMIT,
+              description: 'Potong Harian Makan (RM 13.50)',
+              txn_date: targetDateStr,
+              balance_before: curRhbBal + DAILY_FOOD_LIMIT,
+              balance_after: curRhbBal
+            });
+          }
+
+          // 2. Kira baki tak habis (daripada RM13.50) untuk disapu ke BSN
           const unspentRemaining = Math.max(0, DAILY_FOOD_LIMIT - spentOnThatDay);
 
           if (unspentRemaining > 0 && curRhbBal >= unspentRemaining) {
-            const newRhb = curRhbBal - unspentRemaining;
-            const newBsn = curBsnBal + unspentRemaining;
+            curRhbBal -= unspentRemaining;
+            curBsnBal += unspentRemaining;
 
-            sweepTransactions.push({
+            batchTransactions.push({
               account_id: 'rhb',
               type: 'expense',
               amount: unspentRemaining,
               description: `Auto-Sweep Baki Semalam (Jimat RM${unspentRemaining.toFixed(2)}) ➔ BSN`,
               txn_date: targetDateStr,
-              balance_before: curRhbBal,
-              balance_after: newRhb
+              balance_before: curRhbBal + unspentRemaining,
+              balance_after: curRhbBal
             });
 
-            sweepTransactions.push({
+            batchTransactions.push({
               account_id: 'bsn',
               type: 'deposit',
               amount: unspentRemaining,
               description: `Simpanan Baki Makanan (${targetDateStr}) dari RHB`,
               txn_date: targetDateStr,
-              balance_before: curBsnBal,
-              balance_after: newBsn
+              balance_before: curBsnBal - unspentRemaining,
+              balance_after: curBsnBal
             });
-
-            curRhbBal = newRhb;
-            curBsnBal = newBsn;
           }
 
           checkDate.setDate(checkDate.getDate() + 1);
         }
 
-        if (sweepTransactions.length > 0) {
-          await db.from('money_transactions').insert(sweepTransactions);
+        if (batchTransactions.length > 0) {
+          await db.from('money_transactions').insert(batchTransactions);
           await db.from('money_accounts').update({ balance: curRhbBal }).eq('id', 'rhb');
           await db.from('money_accounts').update({ balance: curBsnBal }).eq('id', 'bsn');
         }
@@ -301,13 +311,11 @@
 
       let spentToday = 0;
       if (todayTxns) {
-        // Abaikan transaksi pemindahan simpanan ke BSN jika dibuat harini
         spentToday = todayTxns
-          .filter(t => !t.description.includes('➔ BSN'))
+          .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
           .reduce((sum, t) => sum + Number(t.amount), 0);
       }
 
-      // Nilai automatik bermula semula pada RM 13.50 setiap hari
       const remainingToday = DAILY_FOOD_LIMIT - spentToday;
       
       document.getElementById('dailyFoodSpent').innerText = `RM ${spentToday.toFixed(2)}`;
@@ -419,7 +427,7 @@
       let spentToday = 0;
       if (todayTxns) {
         spentToday = todayTxns
-          .filter(t => !t.description.includes('➔ BSN'))
+          .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
           .reduce((sum, t) => sum + Number(t.amount), 0);
       }
 
