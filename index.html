@@ -26,12 +26,23 @@
       <div id="todayDate" class="mono text-xs text-zinc-500">Memuat tarikh...</div>
     </header>
 
-    <!-- Status Harian Makan RHB (Had RM13.50/Hari & Simpan BSN) -->
-    <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-2">
+    <!-- Status Harian Makan RHB (Had RM13.50/Hari & Auto-Deduct 445.50) -->
+    <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-3">
       <div class="flex justify-between items-center text-xs">
         <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
-        <span class="text-[11px] text-zinc-500">Had: RM 13.50 (Potong Auto 12:00 AM)</span>
+        <span class="text-[11px] text-zinc-500">Auto -RM13.50 (12 AM)</span>
       </div>
+
+      <!-- Kotak Ubah Nilai Asas RHB (Default 445.50) -->
+      <div class="bg-black/60 border border-zinc-800 rounded-xl p-2.5 flex items-center justify-between gap-2">
+        <div class="text-[10px] uppercase mono text-zinc-400">Jumlah Semasa RHB:</div>
+        <div class="flex items-center gap-1.5">
+          <span class="mono text-xs font-bold text-zinc-500">RM</span>
+          <input type="number" step="0.10" id="rhbBaseInput" value="445.50" onchange="updateRhbBase(this.value)"
+            class="w-28 bg-zinc-900 border border-zinc-700 rounded-lg py-1 px-2 text-sm mono font-bold text-white text-right focus:outline-none focus:border-emerald-500">
+        </div>
+      </div>
+
       <div class="flex justify-between items-baseline">
         <div class="space-y-0.5">
           <span class="text-[10px] text-zinc-500 uppercase mono">Baki Kuota Hari Ini</span>
@@ -48,7 +59,7 @@
 
       <!-- Status Auto-Sweep & Butang Simpan Baki Manual -->
       <div class="pt-2 flex justify-between items-center border-t border-zinc-900/80">
-        <span class="text-[10px] text-zinc-500 mono">Auto potong RM13.50 & baki ke BSN (12 AM):</span>
+        <span class="text-[10px] text-zinc-500 mono">Baki tak habis auto-sweep ke BSN:</span>
         <button onclick="transferRemainingToBSN()" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] mono text-emerald-400 rounded-lg font-bold transition">
           Simpan Baki Awal ➔ BSN
         </button>
@@ -57,7 +68,7 @@
 
     <!-- 4 Kad Baki Akaun -->
     <div class="grid grid-cols-2 gap-2 text-xs mono">
-      <!-- RHB (Baki Sebenar Mengalir Turun) -->
+      <!-- RHB -->
       <div class="bg-zinc-950 border border-zinc-900 p-3 rounded-xl space-y-1">
         <div class="text-[10px] text-zinc-500 uppercase flex justify-between">
           <span>RHB (Makan)</span>
@@ -140,7 +151,10 @@
     const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    const DAILY_FOOD_LIMIT = 13.50; // Peruntukan makan harian
+    const DAILY_FOOD_LIMIT = 13.50; // Had siling perbelanjaan tetap sehari
+
+    let rhbBaseAmount = parseFloat(localStorage.getItem('rhb_base_amount')) || 445.50;
+    document.getElementById('rhbBaseInput').value = rhbBaseAmount.toFixed(2);
 
     let currentAccount = 'rhb';
     let currentType = 'expense';
@@ -156,22 +170,31 @@
     let todayStr = getTodayString();
     document.getElementById('todayDate').innerText = todayStr;
 
-    // Semak setiap 15 saat sama ada sudah melangkah ke hari baharu (12:00 AM)
+    function updateRhbBase(val) {
+      const parsed = parseFloat(val);
+      if (parsed > 0) {
+        rhbBaseAmount = parsed;
+        localStorage.setItem('rhb_base_amount', rhbBaseAmount);
+        loadData();
+      }
+    }
+
+    // Semak setiap 15 saat jika bertukar hari (12:00 AM)
     setInterval(() => {
       const currentCheck = getTodayString();
       if (currentCheck !== todayStr) {
         todayStr = currentCheck;
         document.getElementById('todayDate').innerText = todayStr;
-        processAutoSweepThenLoad();
+        processAutoSweepAndDeduction();
       }
     }, 15000);
 
     // =========================================================================
-    // LOGIK AUTO-SWEEP & POTONGAN HARIAN RM13.50:
-    // Setiap hari, sistem tolak RM13.50 dari akaun RHB (sebagai peruntukan harian)
-    // dan jika ada baki tak habis, pindahkan lebihan ke BSN.
+    // LOGIK AUTOMATIK:
+    // 1. Tolak automatik RM13.50 dari RHB setiap hari.
+    // 2. Baki tak habis dipindahkan (auto-sweep) ke BSN.
     // =========================================================================
-    async function processAutoSweepThenLoad() {
+    async function processAutoSweepAndDeduction() {
       const { data: lastTxn } = await db
         .from('money_transactions')
         .select('txn_date')
@@ -185,10 +208,7 @@
         checkDate.setDate(checkDate.getDate() + 1);
 
         const { data: accounts } = await db.from('money_accounts').select('*');
-        let rhbAcc = accounts ? accounts.find(a => a.id === 'rhb') : null;
         let bsnAcc = accounts ? accounts.find(a => a.id === 'bsn') : null;
-
-        let curRhbBal = rhbAcc ? Number(rhbAcc.balance) : 0;
         let curBsnBal = bsnAcc ? Number(bsnAcc.balance) : 0;
 
         let batchTransactions = [];
@@ -199,41 +219,43 @@
           const d = String(checkDate.getDate()).padStart(2, '0');
           const targetDateStr = `${y}-${m}-${d}`;
 
-          // Semak perbelanjaan sebenar pada hari tersebut
           const { data: pastDayTxns } = await db
             .from('money_transactions')
             .select('*')
             .eq('account_id', 'rhb')
-            .eq('type', 'expense')
             .eq('txn_date', targetDateStr);
 
+          // Kira perbelanjaan sebenar hari tersebut
           let spentOnThatDay = 0;
           if (pastDayTxns && pastDayTxns.length > 0) {
             spentOnThatDay = pastDayTxns
-              .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
+              .filter(t => t.type === 'expense' && !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
               .reduce((sum, t) => sum + Number(t.amount), 0);
           }
 
-          // 1. Rekod potongan automatik harian RM13.50 dari RHB (jika belum wujud)
+          // 1. Tolak automatik RM13.50 dari RHB (jika belum direkodkan pada tarikh tersebut)
           const hasDailyDeduction = pastDayTxns && pastDayTxns.some(t => t.description.includes('Potong Harian'));
-          if (!hasDailyDeduction && curRhbBal >= DAILY_FOOD_LIMIT) {
-            curRhbBal -= DAILY_FOOD_LIMIT;
+          if (!hasDailyDeduction && rhbBaseAmount >= DAILY_FOOD_LIMIT) {
+            let rhbBefore = rhbBaseAmount;
+            rhbBaseAmount -= DAILY_FOOD_LIMIT;
+
             batchTransactions.push({
               account_id: 'rhb',
               type: 'expense',
               amount: DAILY_FOOD_LIMIT,
-              description: 'Potong Harian Makan (RM 13.50)',
+              description: `Potong Harian Makan (RM ${DAILY_FOOD_LIMIT.toFixed(2)})`,
               txn_date: targetDateStr,
-              balance_before: curRhbBal + DAILY_FOOD_LIMIT,
-              balance_after: curRhbBal
+              balance_before: rhbBefore,
+              balance_after: rhbBaseAmount
             });
           }
 
-          // 2. Kira baki tak habis (daripada RM13.50) untuk disapu ke BSN
+          // 2. Baki peruntukan tak habis disapu ke BSN
           const unspentRemaining = Math.max(0, DAILY_FOOD_LIMIT - spentOnThatDay);
-
-          if (unspentRemaining > 0 && curRhbBal >= unspentRemaining) {
-            curRhbBal -= unspentRemaining;
+          if (unspentRemaining > 0 && rhbBaseAmount >= unspentRemaining) {
+            let rhbBeforeSweep = rhbBaseAmount;
+            rhbBaseAmount -= unspentRemaining;
+            let bsnBefore = curBsnBal;
             curBsnBal += unspentRemaining;
 
             batchTransactions.push({
@@ -242,8 +264,8 @@
               amount: unspentRemaining,
               description: `Auto-Sweep Baki Semalam (Jimat RM${unspentRemaining.toFixed(2)}) ➔ BSN`,
               txn_date: targetDateStr,
-              balance_before: curRhbBal + unspentRemaining,
-              balance_after: curRhbBal
+              balance_before: rhbBeforeSweep,
+              balance_after: rhbBaseAmount
             });
 
             batchTransactions.push({
@@ -252,7 +274,7 @@
               amount: unspentRemaining,
               description: `Simpanan Baki Makanan (${targetDateStr}) dari RHB`,
               txn_date: targetDateStr,
-              balance_before: curBsnBal - unspentRemaining,
+              balance_before: bsnBefore,
               balance_after: curBsnBal
             });
           }
@@ -262,8 +284,10 @@
 
         if (batchTransactions.length > 0) {
           await db.from('money_transactions').insert(batchTransactions);
-          await db.from('money_accounts').update({ balance: curRhbBal }).eq('id', 'rhb');
+          await db.from('money_accounts').update({ balance: rhbBaseAmount }).eq('id', 'rhb');
           await db.from('money_accounts').update({ balance: curBsnBal }).eq('id', 'bsn');
+          localStorage.setItem('rhb_base_amount', rhbBaseAmount);
+          document.getElementById('rhbBaseInput').value = rhbBaseAmount.toFixed(2);
         }
       }
 
@@ -292,27 +316,28 @@
     }
 
     async function loadData() {
-      // 1. Muat baki 4 akaun
       const { data: accounts } = await db.from('money_accounts').select('*');
       if (accounts) {
         accounts.forEach(a => {
           const el = document.getElementById(`bal-${a.id}`);
-          if (el) el.innerText = `RM ${Number(a.balance).toFixed(2)}`;
+          if (el) {
+            let val = Number(a.balance);
+            if (a.id === 'rhb') val = rhbBaseAmount;
+            el.innerText = `RM ${val.toFixed(2)}`;
+          }
         });
       }
 
-      // 2. Muat transaksi hari ini untuk kira baki makan harian
       const { data: todayTxns } = await db
         .from('money_transactions')
         .select('*')
         .eq('account_id', 'rhb')
-        .eq('type', 'expense')
         .eq('txn_date', todayStr);
 
       let spentToday = 0;
       if (todayTxns) {
         spentToday = todayTxns
-          .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
+          .filter(t => t.type === 'expense' && !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
           .reduce((sum, t) => sum + Number(t.amount), 0);
       }
 
@@ -333,7 +358,6 @@
       bar.style.width = `${barPct}%`;
       bar.className = remainingToday <= 3 ? "h-full bg-rose-500 transition-all duration-300" : "h-full bg-emerald-500 transition-all duration-300";
 
-      // 3. Muat senarai transaksi terkini
       const { data: txns } = await db
         .from('money_transactions')
         .select('*')
@@ -386,8 +410,16 @@
       btn.innerText = "Memproses...";
 
       const { data: acc } = await db.from('money_accounts').select('balance').eq('id', currentAccount).single();
-      const balanceBefore = Number(acc ? acc.balance : 0);
+      let balanceBefore = Number(acc ? acc.balance : 0);
+      if (currentAccount === 'rhb') balanceBefore = rhbBaseAmount;
+
       const balanceAfter = currentType === 'expense' ? balanceBefore - amount : balanceBefore + amount;
+
+      if (currentAccount === 'rhb') {
+        rhbBaseAmount = balanceAfter;
+        localStorage.setItem('rhb_base_amount', rhbBaseAmount);
+        document.getElementById('rhbBaseInput').value = rhbBaseAmount.toFixed(2);
+      }
 
       const { error: txnErr } = await db.from('money_transactions').insert([{
         account_id: currentAccount,
@@ -421,13 +453,12 @@
         .from('money_transactions')
         .select('*')
         .eq('account_id', 'rhb')
-        .eq('type', 'expense')
         .eq('txn_date', todayStr);
 
       let spentToday = 0;
       if (todayTxns) {
         spentToday = todayTxns
-          .filter(t => !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
+          .filter(t => t.type === 'expense' && !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
           .reduce((sum, t) => sum + Number(t.amount), 0);
       }
 
@@ -442,14 +473,17 @@
       }
 
       const { data: accounts } = await db.from('money_accounts').select('*');
-      const rhbAcc = accounts ? accounts.find(a => a.id === 'rhb') : null;
       const bsnAcc = accounts ? accounts.find(a => a.id === 'bsn') : null;
 
-      const rhbBefore = Number(rhbAcc ? rhbAcc.balance : 0);
+      const rhbBefore = rhbBaseAmount;
       const rhbAfter = rhbBefore - remaining;
 
       const bsnBefore = Number(bsnAcc ? bsnAcc.balance : 0);
       const bsnAfter = bsnBefore + remaining;
+
+      rhbBaseAmount = rhbAfter;
+      localStorage.setItem('rhb_base_amount', rhbBaseAmount);
+      document.getElementById('rhbBaseInput').value = rhbBaseAmount.toFixed(2);
 
       await db.from('money_transactions').insert([
         {
@@ -478,7 +512,7 @@
       await loadData();
     }
 
-    processAutoSweepThenLoad();
+    processAutoSweepAndDeduction();
   </script>
 </body>
 </html>
