@@ -26,7 +26,7 @@
       <div id="todayDate" class="mono text-xs text-zinc-500">Memuat tarikh...</div>
     </header>
 
-    <!-- Status Harian Makan RHB (Had RM13.50/Hari & Auto-Deduct 445.50) -->
+    <!-- Status Harian Makan RHB -->
     <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-3">
       <div class="flex justify-between items-center text-xs">
         <span class="mono uppercase font-bold text-emerald-400">RHB • MAKAN HARIAN</span>
@@ -157,7 +157,7 @@
     const SUPABASE_KEY = "sb_publishable_5NR1DcL0YZ1Z5416-kX_2w_f8la6ycO";
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    const DAILY_FOOD_LIMIT = 13.50; // Had siling perbelanjaan tetap sehari
+    const DAILY_FOOD_LIMIT = 13.50;
 
     let rhbBaseAmount = parseFloat(localStorage.getItem('rhb_base_amount')) || 445.50;
     document.getElementById('rhbBaseInput').value = rhbBaseAmount.toFixed(2);
@@ -170,7 +170,54 @@
       const yyyy = now.getFullYear();
       const mm = String(now.getMonth() + 1).padStart(2, '0');
       const dd = String(now.getDate()).padStart(2, '0');
-      return `${yyyy}-${mm}-${dd}`; }  let todayStr = getTodayString(); document.getElementById('todayDate').innerText = todayStr;  function updateRhbBase(val) { const parsed = parseFloat(val); if (!isNaN(parsed)) { rhbBaseAmount = parsed; localStorage.setItem('rhb_base_amount', rhbBaseAmount); loadData(); } }  // Semak setiap 15 saat jika bertukar hari (12:00 AM) setInterval(() => { const currentCheck = getTodayString(); if (currentCheck !== todayStr) { todayStr = currentCheck; document.getElementById('todayDate').innerText = todayStr; processAutoSweepAndDeduction(); } }, 15000);  async function processAutoSweepAndDeduction() { const { data: lastTxn } = await db .from('money_transactions') .select('txn_date') .eq('account_id', 'rhb') .order('txn_date', { ascending: false }) .limit(1);  if (lastTxn && lastTxn.length > 0) { let checkDate = new Date(lastTxn[0].txn_date); let todayDate = new Date(todayStr); checkDate.setDate(checkDate.getDate() + 1);  const { data: accounts } = await db.from('money_accounts').select('*'); let bsnAcc = accounts ? accounts.find(a => a.id === 'bsn') : null; let curBsnBal = bsnAcc ? Number(bsnAcc.balance) : 0;  let batchTransactions = [];  while (checkDate < todayDate) { const y = checkDate.getFullYear(); const m = String(checkDate.getMonth() + 1).padStart(2, '0'); const d = String(checkDate.getDate()).padStart(2, '0'); const targetDateStr = `${y}-${m}-${d}`;
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    let todayStr = getTodayString();
+    document.getElementById('todayDate').innerText = todayStr;
+
+    function updateRhbBase(val) {
+      const parsed = parseFloat(val);
+      if (!isNaN(parsed)) {
+        rhbBaseAmount = parsed;
+        localStorage.setItem('rhb_base_amount', rhbBaseAmount);
+        loadData();
+      }
+    }
+
+    setInterval(() => {
+      const currentCheck = getTodayString();
+      if (currentCheck !== todayStr) {
+        todayStr = currentCheck;
+        document.getElementById('todayDate').innerText = todayStr;
+        processAutoSweepAndDeduction();
+      }
+    }, 15000);
+
+    async function processAutoSweepAndDeduction() {
+      const { data: lastTxn } = await db
+        .from('money_transactions')
+        .select('txn_date')
+        .eq('account_id', 'rhb')
+        .order('txn_date', { ascending: false })
+        .limit(1);
+
+      if (lastTxn && lastTxn.length > 0) {
+        let checkDate = new Date(lastTxn[0].txn_date);
+        let todayDate = new Date(todayStr);
+        checkDate.setDate(checkDate.getDate() + 1);
+
+        const { data: accounts } = await db.from('money_accounts').select('*');
+        let bsnAcc = accounts ? accounts.find(a => a.id === 'bsn') : null;
+        let curBsnBal = bsnAcc ? Number(bsnAcc.balance) : 0;
+
+        let batchTransactions = [];
+
+        while (checkDate < todayDate) {
+          const y = checkDate.getFullYear();
+          const m = String(checkDate.getMonth() + 1).padStart(2, '0');
+          const d = String(checkDate.getDate()).padStart(2, '0');
+          const targetDateStr = `${y}-${m}-${d}`;
 
           const { data: pastDayTxns } = await db
             .from('money_transactions')
@@ -269,16 +316,46 @@
       const { data: accounts } = await db.from('money_accounts').select('*');
       if (accounts) {
         accounts.forEach(a => {
-          const el = document.getElementById(`bal-${a.id}`); if (el) { let val = Number(a.balance); if (a.id === 'rhb') val = rhbBaseAmount; el.innerText = `RM ${val.toFixed(2)}`;
+          const el = document.getElementById(`bal-${a.id}`);
+          if (el) {
+            let val = Number(a.balance);
+            if (a.id === 'rhb') val = rhbBaseAmount;
+            el.innerText = `RM ${val.toFixed(2)}`;
           }
         });
       }
 
-      // Paparkan baki selepas tolak RM 13.50 di sebelah input atas
       const afterDeduction = rhbBaseAmount - DAILY_FOOD_LIMIT;
-      document.getElementById('rhbAfterDeduction').innerText = `RM ${afterDeduction.toFixed(2)}`;  const { data: todayTxns } = await db .from('money_transactions') .select('*') .eq('account_id', 'rhb') .eq('txn_date', todayStr);  let spentToday = 0; if (todayTxns) { spentToday = todayTxns .filter(t => t.type === 'expense' && !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian')) .reduce((sum, t) => sum + Number(t.amount), 0); }  const remainingToday = DAILY_FOOD_LIMIT - spentToday;  document.getElementById('dailyFoodSpent').innerText = `RM ${spentToday.toFixed(2)}`;
+      document.getElementById('rhbAfterDeduction').innerText = `RM ${afterDeduction.toFixed(2)}`;
+
+      const { data: todayTxns } = await db
+        .from('money_transactions')
+        .select('*')
+        .eq('account_id', 'rhb')
+        .eq('txn_date', todayStr);
+
+      let spentToday = 0;
+      if (todayTxns) {
+        spentToday = todayTxns
+          .filter(t => t.type === 'expense' && !t.description.includes('➔ BSN') && !t.description.includes('Potong Harian'))
+          .reduce((sum, t) => sum + Number(t.amount), 0);
+      }
+
+      const remainingToday = DAILY_FOOD_LIMIT - spentToday;
+      
+      document.getElementById('dailyFoodSpent').innerText = `RM ${spentToday.toFixed(2)}`;
       const remEl = document.getElementById('dailyFoodRemaining');
-      remEl.innerText = `RM ${remainingToday.toFixed(2)}`;  if (remainingToday < 0) { remEl.className = "text-3xl font-extrabold mono text-rose-500"; } else { remEl.className = "text-3xl font-extrabold mono text-white"; }  const barPct = Math.max(0, Math.min(100, Math.round((remainingToday / DAILY_FOOD_LIMIT) * 100))); const bar = document.getElementById('dailyFoodBar'); bar.style.width = `${barPct}%`;
+      remEl.innerText = `RM ${remainingToday.toFixed(2)}`;
+      
+      if (remainingToday < 0) {
+        remEl.className = "text-3xl font-extrabold mono text-rose-500";
+      } else {
+        remEl.className = "text-3xl font-extrabold mono text-white";
+      }
+
+      const barPct = Math.max(0, Math.min(100, Math.round((remainingToday / DAILY_FOOD_LIMIT) * 100)));
+      const bar = document.getElementById('dailyFoodBar');
+      bar.style.width = `${barPct}%`;
       bar.className = remainingToday <= 3 ? "h-full bg-rose-500 transition-all duration-300" : "h-full bg-emerald-500 transition-all duration-300";
 
       const { data: txns } = await db
@@ -302,11 +379,12 @@
                 ${t.account_id.toUpperCase()} • <span class="text-zinc-400 font-normal capitalize">${t.description || 'Transaksi'}</span>
               </div>
               <span class="font-bold text-xs ${t.type === 'expense' ? 'text-rose-400' : 'text-emerald-400'}">
-                ${t.type === 'expense' ? '-' : '+'} RM${Number(t.amount).toFixed(2)}
+                ${t.type === 'expense' ? '-' : '+'} RM ${Number(t.amount).toFixed(2)}
               </span>
             </div>
             <div class="flex justify-between items-center text-[10px] text-zinc-500 pt-0.5 border-t border-zinc-900/40">
-              <span>${t.txn_date}</span>${hasAudit ? `
+              <span>${t.txn_date}</span>
+              ${hasAudit ? `
                 <span class="mono text-zinc-400">
                   RM ${Number(t.balance_before).toFixed(2)} ➔ <b class="text-zinc-200">RM ${Number(t.balance_after).toFixed(2)}</b>
                 </span>
@@ -390,4 +468,51 @@
         return;
       }
 
-      if (!confirm(`Pindahkan b
+      if (!confirm(`Pindahkan baki kuota makan RM ${remaining.toFixed(2)} dari RHB ke BSN sekarang?`)) {
+        return;
+      }
+
+      const { data: accounts } = await db.from('money_accounts').select('*');
+      const bsnAcc = accounts ? accounts.find(a => a.id === 'bsn') : null;
+
+      const rhbBefore = rhbBaseAmount;
+      const rhbAfter = rhbBefore - remaining;
+
+      const bsnBefore = Number(bsnAcc ? bsnAcc.balance : 0);
+      const bsnAfter = bsnBefore + remaining;
+
+      rhbBaseAmount = rhbAfter;
+      localStorage.setItem('rhb_base_amount', rhbBaseAmount);
+      document.getElementById('rhbBaseInput').value = rhbBaseAmount.toFixed(2);
+
+      await db.from('money_transactions').insert([
+        {
+          account_id: 'rhb',
+          type: 'expense',
+          amount: remaining,
+          description: 'Simpan Baki Kuota Makan ➔ BSN',
+          txn_date: todayStr,
+          balance_before: rhbBefore,
+          balance_after: rhbAfter
+        },
+        {
+          account_id: 'bsn',
+          type: 'deposit',
+          amount: remaining,
+          description: 'Simpanan Baki Makanan dari RHB',
+          txn_date: todayStr,
+          balance_before: bsnBefore,
+          balance_after: bsnAfter
+        }
+      ]);
+
+      await db.from('money_accounts').update({ balance: rhbAfter }).eq('id', 'rhb');
+      await db.from('money_accounts').update({ balance: bsnAfter }).eq('id', 'bsn');
+
+      await loadData();
+    }
+
+    processAutoSweepAndDeduction();
+  </script>
+</body>
+</html>
