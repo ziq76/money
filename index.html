@@ -26,6 +26,24 @@
       <div id="todayDate" class="mono text-xs text-zinc-500">Memuat tarikh...</div>
     </header>
 
+    <!-- Seksyen SPayLater Tracker -->
+    <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-3">
+      <div class="flex justify-between items-center text-xs">
+        <span class="mono uppercase font-bold text-emerald-400">SPAYLATER TRACKER</span>
+        <span class="text-[11px] text-zinc-500">Had: RM 2,400.00</span>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-black/60 border border-zinc-800 rounded-xl p-3 space-y-1">
+          <span class="text-[10px] text-zinc-500 uppercase mono">Hutang Semasa</span>
+          <div id="spayDebt" class="text-lg font-bold mono text-rose-400">RM 73.78</div>
+        </div>
+        <div class="bg-black/60 border border-zinc-800 rounded-xl p-3 space-y-1">
+          <span class="text-[10px] text-zinc-500 uppercase mono">Baki Had Tinggal</span>
+          <div id="spayRemaining" class="text-lg font-bold mono text-emerald-400">RM 2,326.22</div>
+        </div>
+      </div>
+    </section>
+
     <!-- Status Harian Makan RHB -->
     <section class="bg-zinc-950 border border-emerald-900/40 rounded-2xl p-4 space-y-3">
       <div class="flex justify-between items-center text-xs">
@@ -150,6 +168,13 @@
     const DAILY_FOOD_LIMIT = 13.50;
 
     let rhbBaseAmount = parseFloat(localStorage.getItem('rhb_base_amount')) || 445.50;
+
+    // SPayLater Initialization
+    const spayLimit = 2400.00;
+    const spayDebt = 73.78;
+    const spayRemaining = spayLimit - spayDebt;
+    document.getElementById('spayDebt').innerText = `RM ${spayDebt.toFixed(2)}`;
+    document.getElementById('spayRemaining').innerText = `RM ${spayRemaining.toFixed(2)}`;
 
     let currentAccount = 'rhb';
     let currentType = 'expense';
@@ -304,7 +329,6 @@
         });
       }
 
-      // Paparkan baki esok (baki RHB semasa ditolak RM 13.50)
       const tomorrowProjection = rhbBaseAmount - DAILY_FOOD_LIMIT;
       document.getElementById('tomorrowProjection').innerText = `RM ${tomorrowProjection.toFixed(2)}`;
 
